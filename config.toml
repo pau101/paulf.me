@@ -1,0 +1,60 @@
+baseurl = "/"
+title = "Paul Fulham"
+subtitle = "Homepage & Blog"
+
+languageCode = "en-us"
+theme = "hello-friend-ng"
+
+copyright = '<a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">CC BY-NC 4.0</a>'
+
+[params]
+  dateform        = "Jan 2, 2006"
+  dateformShort   = "Jan 2"
+  dateformNum     = "2006-01-02"
+  dateformNumTime = "2006-01-02 15:04 -0700"
+
+  # Metadata mostly used in document's head
+  description = "Homepage and blog of Paul Fulham"
+  keywords = "homepage, blog, development, programming, software"
+  images = [""]
+
+  homeSubtitle = "Software Developer"
+
+  # Directory name of your blog content (default is `content/posts`)
+  contentTypeName = "blog"
+
+  # Default theme "light" or "dark"
+  defaultTheme = "light"
+
+  [params.logo]
+    logoText = "Home"
+    logoHomeLink = "/"
+
+  # Social icons
+  [[params.social]]
+    name = "twitter"
+    url = "http://twitter.com/polimics/"
+
+  [[params.social]]
+    name = "email"
+    url  = "mailto:paul.fulham0@gmail.com"
+
+  [[params.social]]
+    name = "github"
+    url  = "https://github.com/pau101/"
+
+
+title = "Paul Fulham"
+subtitle = "A simple theme for Hugo"
+keywords = ""
+
+
+[menu]
+  [[menu.main]]
+    identifier = "about"
+    name       = "About"
+    url        = "about/"
+  [[menu.main]]
+    identifier = "blog"
+    name       = "Blog"
+    url        = "blog/"
