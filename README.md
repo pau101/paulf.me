@@ -1,6 +1,22 @@
 # paulf.me
 
-[![GitHub](https://img.shields.io/github/license/pau101/paulf.me.svg)](https://github.com/pau101/paulf.me/blob/master/LICENSE.md)
-[![Netlify Status](https://api.netlify.com/api/v1/badges/22243189-eaad-4ca3-b8f4-085585cf1c4c/deploy-status)](https://app.netlify.com/sites/loving-mcclintock-2c0a86/deploys)
+> Home of Paul Fulham
 
-My homepage and blog
+## Build Setup
+
+```bash
+# install dependencies
+$ npm install
+
+# serve with hot reload at localhost:3000
+$ npm run dev
+
+# build for production and launch server
+$ npm run build
+$ npm run start
+
+# generate static project
+$ npm run generate
+```
+
+For detailed explanation on how things work, check out [Nuxt.js docs](https://nuxtjs.org).
