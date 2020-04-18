@@ -12,6 +12,7 @@
     "lint": "eslint --ext .js,.vue --ignore-path .gitignore ."
   },
   "dependencies": {
+    "keycode-js": "^2.0.3",
     "nuxt": "^2.0.0",
     "three": "^0.115.0"
   },
