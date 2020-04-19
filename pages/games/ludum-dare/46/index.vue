@@ -2,7 +2,7 @@
   <main aria-role="main">
     <div>
       <h1>Ludum Dare 46</h1>
-      <canvas id="game" :width="width" :height="height"></canvas>
+      <canvas id="game" :width="width" :height="height" tabindex="1"></canvas>
     </div>
   </main>
 </template>
@@ -19,7 +19,9 @@ export default {
     }
   },
   mounted() {
-    this.game = new Game(document.getElementById('game'))
+    const canvas = document.getElementById('game')
+    this.game = new Game(canvas)
+    canvas.focus()
   },
   destroyed() {
     this.game && this.game.dispose()
