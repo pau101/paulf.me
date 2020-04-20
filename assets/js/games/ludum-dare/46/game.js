@@ -122,7 +122,7 @@ class Tree extends GameObject {
   }
 
   fall(vec) {
-    this.dir = moveTowardsAngle(
+    this.dir = moveTowardsAngleRadians(
       this.dir,
       Math.atan2(vec.x, vec.z),
       Math.cos(this.angle) ** 4
@@ -216,12 +216,26 @@ class Tank extends Mob {
     this.speed = 0
   }
 
+  look(target) {
+    this.turret.rotation.y = BABYLON.Scalar.Clamp(
+      moveTowardsAngleRadians(
+        this.turret.rotation.y,
+        BABYLON.Scalar.NormalizeRadians(
+          target - this.mesh.rotation.y
+        ),
+        0.015,
+      ),
+      -Math.PI / 2,
+      Math.PI / 2
+    )
+  }
+
   steer(target) {
-    this.mesh.rotation.y = moveTowardsAngle(this.mesh.rotation.y, target, 0.015)
+    this.mesh.rotation.y = moveTowardsAngleRadians(this.mesh.rotation.y, target, 0.015)
     const speed = BABYLON.Scalar.Lerp(
       0,
       10,
-      1 - Math.abs(deltaAngle(this.mesh.rotation.y, target)) / Math.PI
+      1 - Math.abs(deltaAngleRadians(this.mesh.rotation.y, target)) / Math.PI
     )
     this.speed = BABYLON.Scalar.MoveTowards(this.speed, speed, 1)
     this.addAcceleration(
@@ -257,13 +271,32 @@ class Tank extends Mob {
 class EnemyTank extends Tank {
   constructor(mesh, turret) {
     super(mesh, turret)
-    this.delay = 0
     this.wait = 0
     this.target = undefined
+    this.targetLook = undefined
+    this.lookWait = 0
   }
 
   update(dt) {
     super.update(dt)
+    if (this.targetLook !== undefined) {
+      this.look(this.targetLook)
+      if (this.lookWait) {
+        this.lookWait -= dt
+        if (this.lookWait < 0) {
+          this.targetLook = undefined
+          this.lookWait = 0
+        }
+      }
+    } else if (this.lookWait) {
+        this.lookWait -= dt
+        if (this.lookWait < 0) {
+          this.lookWait = 0
+        }
+      } else {
+        this.targetLook = this.mesh.rotation.y + BABYLON.Scalar.Denormalize(this.world.rng(), -Math.PI / 4, Math.PI / 4)
+        this.lookWait = 2
+      }
     if (this.wait) {
       this.wait -= dt
       if (this.wait < 0) {
@@ -296,7 +329,7 @@ class EnemyTank extends Tank {
   }
 }
 
-function deltaAngle(current, target) {
+function deltaAngleRadians(current, target) {
   let num = BABYLON.Scalar.Repeat(target - current, 2 * Math.PI)
   if (num > Math.PI) {
     num -= 2 * Math.PI
@@ -304,8 +337,8 @@ function deltaAngle(current, target) {
   return num
 }
 
-function moveTowardsAngle(current, target, maxDelta) {
-  const num = deltaAngle(current, target)
+function moveTowardsAngleRadians(current, target, maxDelta) {
+  const num = deltaAngleRadians(current, target)
   let result = 0
   if (-maxDelta < num && num < maxDelta) {
     result = target
@@ -409,20 +442,8 @@ class Game {
       if (this.inputs[KeyCode.KEY_LEFT]) tz--
       if (this.inputs[KeyCode.KEY_RIGHT]) tz++
       if (tx !== 0 || tz !== 0) {
-        const target = BABYLON.Scalar.Clamp(
-          BABYLON.Scalar.NormalizeRadians(
-            this.camera.rotation.y +
-              Math.atan2(tz, tx) -
-              this.player.mesh.rotation.y
-          ),
-          -Math.PI / 2,
-          Math.PI / 2
-        )
-        this.player.turret.rotation.y = moveTowardsAngle(
-          this.player.turret.rotation.y,
-          target,
-          0.015
-        )
+        const target = this.camera.rotation.y + Math.atan2(tz, tx)
+        this.player.look(target)
       }
       this.world.update(this.engine.getDeltaTime() / 1000)
       this.camera.position.x = this.player.mesh.position.x
