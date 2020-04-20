@@ -1,17 +1,24 @@
+/* eslint-disable prettier/prettier */
 import * as BABYLON from 'babylonjs'
 import * as KeyCode from 'keycode-js'
 import Alea from 'alea'
 import SimplexNoise from 'simplex-noise'
 
 class World {
-  constructor() {
+  constructor(rng, sun, ambient) {
+    this.rng = rng
+    this.sun = sun
+    this.ambient = ambient
     this.mobs = new Set()
     this.trees = new Set()
     this.removals = new Set()
     this.updating = new Set()
+    this.enemies = new Set()
+    this.time = 0
   }
 
   addUpdating(u) {
+    u.world = this
     this.updating.add(u)
   }
 
@@ -25,12 +32,17 @@ class World {
     this.updating.add(mob)
   }
 
+  addEnemy(e) {
+    this.enemies.add(e)
+    this.addMob(e)
+  }
+
   addTree(tree) {
     tree.world = this
     this.trees.add(tree)
   }
 
-  update() {
+  update(dt) {
     for (const r of this.removals) {
       this.mobs.delete(r)
       this.trees.delete(r)
@@ -38,8 +50,37 @@ class World {
       r.dispose()
     }
     for (const u of this.updating) {
-      u.update()
+      u.update(dt)
     }
+    if (isNaN(this.time)) return
+    this.time = this.time + (dt * (2 * Math.PI)) / (60 * 4)
+    while (this.time > 2 * Math.PI) {
+      this.time -= 2 * Math.PI
+    }
+    const source = this.time > Math.PI ? this.time - Math.PI : this.time
+    BABYLON.Vector3.Right().rotateByQuaternionToRef(
+      BABYLON.Quaternion.RotationAxis(BABYLON.Vector3.Forward(), source),
+      this.sun.position
+    )
+    this.sun.position.rotateByQuaternionToRef(
+      BABYLON.Quaternion.RotationAxis(BABYLON.Vector3.Right(), Math.PI / 8),
+      this.sun.position
+    )
+    this.sun.position.scaleToRef(-1, this.sun.direction)
+    this.pi = this.sun.intensity
+    this.sun.intensity = BABYLON.Scalar.Denormalize(
+      (Math.sin(this.time) + 1) / 2 +
+        (this.time > Math.PI
+          ? 0.05 * ((Math.sin(2 * this.time - Math.PI / 2) + 1) / 2)
+          : 0),
+      0.0,
+      0.4
+    )
+    this.ambient.intensity = BABYLON.Scalar.Denormalize(
+      this.time > Math.PI ? 0 : (Math.sin(this.time) + 1) / 2,
+      0.2,
+      0.4
+    )
   }
 }
 
@@ -52,6 +93,10 @@ class GameObject {
     this.mesh.metadata = this.mesh.metadata || {}
     this.mesh.metadata.object = this
     this.world = undefined
+  }
+
+  rng() {
+    return this.world.rng()
   }
 
   dispose() {
@@ -85,9 +130,8 @@ class Tree extends GameObject {
     this.world.addUpdating(this)
   }
 
-  update() {
+  update(dt) {
     if (this.angle === Math.PI / 2) return
-    const dt = 1.0 / 60.0
     this.angularVelocity += 4.0 * dt
     this.angularVelocity +=
       Math.min(
@@ -111,7 +155,6 @@ class Mob extends GameObject {
     this.mass = 62
     this.volume = 0.062
     this.drag = 1.2
-    this.speed = 0.0
     this.mesh.onCollide = (mesh) => this.collision(mesh)
   }
 
@@ -148,12 +191,12 @@ class Mob extends GameObject {
     )
   }
 
-  step() {
-    const dt = new BABYLON.Vector3().setAll(1.0 / 60.0)
-    this.acceleration.multiplyInPlace(dt)
+  step(dt) {
+    const dtv = new BABYLON.Vector3().setAll(1.0 / 60.0)
+    this.acceleration.multiplyInPlace(dtv)
     this.velocity.addInPlace(this.acceleration)
     this.acceleration.setAll(0)
-    const displacement = this.velocity.clone().multiplyInPlace(dt)
+    const displacement = this.velocity.clone().multiplyInPlace(dtv)
     this.mesh.moveWithCollisions(displacement)
   }
 
@@ -170,15 +213,83 @@ class Tank extends Mob {
   constructor(mesh, turret) {
     super(mesh)
     this.turret = turret
+    this.speed = 0
   }
 
-  step() {
+  steer(target) {
+    this.mesh.rotation.y = moveTowardsAngle(this.mesh.rotation.y, target, 0.015)
+    const speed = BABYLON.Scalar.Lerp(
+      0,
+      10,
+      1 - Math.abs(deltaAngle(this.mesh.rotation.y, target)) / Math.PI
+    )
+    this.speed = BABYLON.Scalar.MoveTowards(this.speed, speed, 1)
+    this.addAcceleration(
+      new BABYLON.Vector3(
+        this.speed * Math.sin(this.mesh.rotation.y),
+        0.0,
+        this.speed * Math.cos(this.mesh.rotation.y)
+      )
+    )
+    this.moving = true
+  }
+
+  stop() {
+    if (this.moving) {
+      this.addAcceleration(
+        new BABYLON.Vector3().setAll(-20.0).multiplyInPlace(this.velocity)
+      )
+      this.moving = false
+    }
+  }
+
+  step(dt) {
     super.step()
-    if (this.world) {
-      for (const tree of this.world.trees) {
-        const dir = tree.mesh.position.subtract(this.mesh.position)
-        if (dir.lengthSquared() < 10 && tree.intersects(this.mesh)) {
-          tree.fall(dir)
+    for (const tree of this.world.trees) {
+      const dir = tree.mesh.position.subtract(this.mesh.position)
+      if (dir.lengthSquared() < 10 && tree.intersects(this.mesh)) {
+        tree.fall(dir)
+      }
+    }
+  }
+}
+
+class EnemyTank extends Tank {
+  constructor(mesh, turret) {
+    super(mesh, turret)
+    this.delay = 0
+    this.wait = 0
+    this.target = undefined
+  }
+
+  update(dt) {
+    super.update(dt)
+    if (this.wait) {
+      this.wait -= dt
+      if (this.wait < 0) {
+        this.wait = 0
+      }
+      return
+    }
+    if (this.target !== undefined) {
+      if (this.target.angle === 0) {
+        const delta = this.target.mesh.position.subtract(this.mesh.position)
+        this.steer(Math.atan2(delta.x, delta.z))
+      } else {
+        this.stop()
+        this.target = undefined
+        this.wait = this.world.rng() * 0.1 + 0.4
+      }
+    } else {
+      this.target = undefined
+      let closest = Number.POSITIVE_INFINITY
+      for (const t of this.world.trees) {
+        if (t.angle !== 0) continue
+        const delta = t.mesh.position.subtract(this.mesh.position)
+        const dist = delta.lengthSquared()
+        if (dist < closest) {
+          closest = dist
+          this.target = t
         }
       }
     }
@@ -212,8 +323,7 @@ class Game {
     this.scene.collisionsEnabled = true
     this.scene.clearColor = new BABYLON.Color3(0.57, 0.74, 0.88)
     this.scene.ambientColor = new BABYLON.Color3(0.8, 0.88, 0.94)
-    this.size = 48
-    this.world = new World()
+    this.size = 64
     this.camera = new BABYLON.UniversalCamera(
       'camera',
       BABYLON.Vector3.Zero(),
@@ -222,7 +332,7 @@ class Game {
     this.camera.rotation.y = -Math.PI / 4
     this.camera.rotation.x = Math.PI / 6
     this.camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA
-    const zoom = 10
+    const zoom = 20
     const a = this.engine.getAspectRatio(this.camera)
     this.camera.orthoTop = zoom
     this.camera.orthoBottom = -zoom
@@ -245,10 +355,12 @@ class Game {
       this.scene
     )
     sun.intensity = 0.4
+    this.world = new World(new Alea(), sun, ambient)
+    this.world.time = Number.NaN
     this.shadows = new BABYLON.ShadowGenerator(1024, sun)
     this.shadows.usePercentageCloserFiltering = true
     // this.shadows.autoCalcDepthBounds = true
-    // this.shadows.autoCalcDepthBoundsRefreshRate = 4
+    // this.shadows.autoCalcDepthBoundsRefreshRate = 2
     // new BABYLON.PointLight(
     //   'light2',
     //   new BABYLON.Vector3(0, 10, -10),
@@ -261,9 +373,20 @@ class Game {
     this.materials.bark = new BABYLON.StandardMaterial('bark', this.scene)
     this.materials.bark.specularColor = new BABYLON.Color3(0, 0, 0)
     this.materials.bark.diffuseColor = new BABYLON.Color3(0.48, 0.35, 0.17)
+    this.materials.rock = new BABYLON.StandardMaterial('rock', this.scene)
+    this.materials.rock.specularColor = new BABYLON.Color3(0.25, 0.25, 0.25)
+    this.materials.rock.diffuseColor = new BABYLON.Color3(0.42, 0.47, 0.48)
     this.createWorld()
-    this.player = this.createTank('player')
+    this.player = this.createTank(
+      'player',
+      new BABYLON.Color3(0.81, 0.69, 0.36),
+      (m, t) => new Tank(m, t)
+    )
     this.world.addMob(this.player)
+    const enemy = this.createTank('enemy', new BABYLON.Color3(0.66, 0.19, 0.19), (m, t) => new EnemyTank(m, t))
+    enemy.mesh.position.x = 5
+    enemy.mesh.position.z = 5
+    this.world.addEnemy(enemy)
 
     this.inputs = {}
     this.engine.runRenderLoop(() => {
@@ -275,39 +398,9 @@ class Game {
       if (this.inputs[KeyCode.KEY_D]) sz++
       if (sx !== 0 || sz !== 0) {
         const target = this.camera.rotation.y + Math.atan2(sz, sx)
-        this.player.mesh.rotation.y = moveTowardsAngle(
-          this.player.mesh.rotation.y,
-          target,
-          0.015
-        )
-        const speed = BABYLON.Scalar.Lerp(
-          0,
-          10,
-          1 -
-            Math.abs(deltaAngle(this.player.mesh.rotation.y, target)) / Math.PI
-        )
-        this.player.moving = true
-        this.player.speed = BABYLON.Scalar.MoveTowards(
-          this.player.speed,
-          speed,
-          1
-        )
-        this.player.addAcceleration(
-          new BABYLON.Vector3(
-            this.player.speed * Math.sin(this.player.mesh.rotation.y),
-            0.0,
-            this.player.speed * Math.cos(this.player.mesh.rotation.y)
-          )
-        )
+        this.player.steer(target)
       } else {
-        if (this.player.moving) {
-          this.player.addAcceleration(
-            new BABYLON.Vector3()
-              .setAll(-20.0)
-              .multiplyInPlace(this.player.velocity)
-          )
-        }
-        this.player.moving = false
+        this.player.stop()
       }
       let tx = 0
       let tz = 0
@@ -331,7 +424,7 @@ class Game {
           0.015
         )
       }
-      this.world.update()
+      this.world.update(this.engine.getDeltaTime() / 1000)
       this.camera.position.x = this.player.mesh.position.x
       this.camera.position.z = this.player.mesh.position.z
       this.scene.render()
@@ -341,7 +434,7 @@ class Game {
     canvas.addEventListener('keyup', (e) => this.keyup(e))
   }
 
-  createTank(name) {
+  createTank(name, color, type) {
     const options = { width: 2, height: 0.86, depth: 3.7 }
     const body = BABYLON.MeshBuilder.CreateBox(
       `${name}_box`,
@@ -357,7 +450,7 @@ class Game {
     body.checkCollisions = true
     body.material = new BABYLON.StandardMaterial(`${name}_mat`, this.scene)
     body.material.specularColor = new BABYLON.Color3(0, 0, 0)
-    body.material.diffuseColor = new BABYLON.Color3(0.81, 0.69, 0.36)
+    body.material.diffuseColor = color
     body.receiveShadows = true
     const turretDepth = 2.2
     const turret = BABYLON.MeshBuilder.CreateBox(
@@ -381,7 +474,7 @@ class Game {
     cannon.position.y = 0.015
     cannon.parent = turret
     this.shadows.addShadowCaster(body, true)
-    return new Tank(body, turret)
+    return type(body, turret)
   }
 
   createTree() {
@@ -435,6 +528,7 @@ class Game {
     ground.material = new BABYLON.StandardMaterial('grass', this.scene)
     ground.material.specularColor = new BABYLON.Color3(0, 0, 0)
     ground.material.diffuseColor = new BABYLON.Color3(0.49, 0.72, 0.34)
+    this.createWalls()
     const subdivisions = (this.size * 2) | 0
     const dirt = BABYLON.MeshBuilder.CreateGround(
       'dirt',
@@ -471,29 +565,49 @@ class Game {
     this.createRocks()
   }
 
+  createWalls() {
+    const h = 4
+    const hb = 0.5
+    const left = BABYLON.MeshBuilder.CreateBox('left_wall', { width: 0.5, height: h + hb, depth: this.size + 0.5 })
+    left.material = this.materials.rock
+    left.checkCollisions = true
+    left.position.x -= this.size / 2
+    left.position.y -= hb
+    const right = BABYLON.MeshBuilder.CreateBox('left_wall', { width: 0.5, height: h + hb, depth: this.size + 0.5 })
+    right.material = this.materials.rock
+    right.checkCollisions = true
+    right.position.x += this.size / 2
+    right.position.y -= hb
+    const forward = BABYLON.MeshBuilder.CreateBox('forward_wall', { width: this.size + 0.5, height: h + hb, depth: 0.5 })
+    forward.material = this.materials.rock
+    forward.checkCollisions = true
+    forward.position.z -= this.size / 2
+    forward.position.y -= hb
+    const back = BABYLON.MeshBuilder.CreateBox('back_wall', { width: this.size + 0.5, height: h + hb, depth: 0.5 })
+    back.material = this.materials.rock
+    back.checkCollisions = true
+    back.position.z += this.size / 2
+    back.position.y -= hb
+  }
+
   createTrees() {
     const rng = new Alea('alizee')
-    const simplex = new SimplexNoise(new Alea('foobar'))
+    const simplex = new SimplexNoise(rng)
     const spacing = 4
     const noiseScale = 0.04
+    const size = this.size - 12
     const prototree = this.createTree()
-    // prototree.registerInstancedBuffer('color', 4)
     prototree.isVisible = false
+    prototree.receiveShadows = true
     let trees = 0
-    for (let x = 0; x < this.size / spacing; x++) {
-      for (let y = 0; y < this.size / spacing; y++) {
-        const wx = x * spacing - this.size / 2
-        const wy = y * spacing - this.size / 2
+    for (let x = 0; x < size / spacing; x++) {
+      for (let y = 0; y < size / spacing; y++) {
+        const wx = x * spacing - size / 2
+        const wy = y * spacing - size / 2
         const d = (simplex.noise2D(wx * noiseScale, wy * noiseScale) + 1) / 2
         if (rng() < d * d * 2) {
           const tree = prototree.createInstance(`tree_${++trees}`)
           tree.metadata = { ...prototree.metadata }
-          // tree.instancedBuffers.color = new BABYLON.Color4(
-          //   rng() * 0.2 + 0.8,
-          //   1.0,
-          //   rng() * 0.2 + 0.8,
-          //   1.0
-          // )
           tree.position.x = wx + (rng() / 2) * spacing
           tree.position.z = wy + (rng() / 2) * spacing
           this.world.addTree(new Tree(tree))
@@ -509,9 +623,7 @@ class Game {
     const rng = new Alea('rocks')
     const spacing = 2
     const rockproto = BABYLON.MeshBuilder.CreateBox('rock', { size: 0.5 })
-    rockproto.material = new BABYLON.StandardMaterial('grass', this.scene)
-    rockproto.material.specularColor = new BABYLON.Color3(0.25, 0.25, 0.25)
-    rockproto.material.diffuseColor = new BABYLON.Color3(0.42, 0.47, 0.48)
+    rockproto.material = this.materials.rock
     rockproto.receiveShadows = true
     rockproto.isVisible = false
     let rocks = 0
