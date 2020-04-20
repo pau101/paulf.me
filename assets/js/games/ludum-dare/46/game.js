@@ -5,21 +5,40 @@ import SimplexNoise from 'simplex-noise'
 
 class World {
   constructor() {
-    this.mobs = []
-    this.trees = []
+    this.mobs = new Set()
+    this.trees = new Set()
+    this.removals = new Set()
+    this.updating = new Set()
   }
 
-  add(mob) {
-    this.mobs.push(mob)
+  addUpdating(u) {
+    this.updating.add(u)
+  }
+
+  remove(obj) {
+    this.removals.add(obj)
+  }
+
+  addMob(mob) {
+    mob.world = this
+    this.mobs.add(mob)
+    this.updating.add(mob)
   }
 
   addTree(tree) {
-    this.trees.push(tree)
+    tree.world = this
+    this.trees.add(tree)
   }
 
   update() {
-    for (const m of this.mobs) {
-      m.update()
+    for (const r of this.removals) {
+      this.mobs.delete(r)
+      this.trees.delete(r)
+      this.updating.delete(r)
+      r.dispose()
+    }
+    for (const u of this.updating) {
+      u.update()
     }
   }
 }
@@ -27,9 +46,57 @@ class World {
 const G = 9.81
 const GRAVITY = new BABYLON.Vector3(0, -G, 0)
 
-class Mob {
+class GameObject {
   constructor(mesh) {
     this.mesh = mesh
+    this.mesh.metadata = { object: this }
+    this.world = undefined
+  }
+
+  dispose() {
+    this.mesh && this.mesh.dispose()
+    this.mesh = undefined
+  }
+}
+
+class Tree extends GameObject {
+  constructor(mesh) {
+    super(mesh)
+    this.angularVelocity = 0
+    this.angle = 0
+    this.dir = 0
+  }
+
+  fall(vec) {
+    this.dir = moveTowardsAngle(
+      this.dir,
+      Math.atan2(vec.x, vec.z),
+      Math.cos(this.angle) ** 4
+    )
+    this.world.addUpdating(this)
+  }
+
+  update() {
+    if (this.angle === Math.PI / 2) return
+    const dt = 1.0 / 60.0
+    this.angularVelocity += 4.0 * dt
+    this.angularVelocity +=
+      Math.min(
+        -0.33 * this.angularVelocity * this.angularVelocity,
+        this.angularVelocity
+      ) * dt
+    this.angle += this.angularVelocity * dt
+    if (this.angle > Math.PI / 2) {
+      this.angle = Math.PI / 2
+    }
+    this.mesh.rotation.y = this.dir
+    this.mesh.rotation.x = this.angle
+  }
+}
+
+class Mob extends GameObject {
+  constructor(mesh) {
+    super(mesh)
     this.acceleration = new BABYLON.Vector3()
     this.velocity = new BABYLON.Vector3()
     this.mass = 62
@@ -95,6 +162,18 @@ class Tank extends Mob {
     super(mesh)
     this.turret = turret
   }
+
+  step() {
+    super.step()
+    if (this.world) {
+      for (const tree of this.world.trees) {
+        const dir = tree.mesh.position.subtract(this.mesh.position)
+        if (dir.lengthSquared() < 5) {
+          tree.fall(dir)
+        }
+      }
+    }
+  }
 }
 
 function deltaAngle(current, target) {
@@ -132,7 +211,7 @@ class Game {
     this.camera.rotation.y = -Math.PI / 4
     this.camera.rotation.x = Math.PI / 6
     this.camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA
-    const zoom = 20 // 4
+    const zoom = 5
     const a = this.engine.getAspectRatio(this.camera)
     this.camera.orthoTop = zoom
     this.camera.orthoBottom = -zoom
@@ -151,7 +230,7 @@ class Game {
     ambient.intensity = 0.5
     const sun = new BABYLON.DirectionalLight(
       'sun_light',
-      new BABYLON.Vector3(-0.5, -1, 0).normalize(),
+      new BABYLON.Vector3(-0.5, -0.8, 0).normalize(),
       this.scene
     )
     sun.intensity = 0.5
@@ -173,7 +252,7 @@ class Game {
     this.materials.bark.diffuseColor = new BABYLON.Color3(0.48, 0.35, 0.17)
     this.createWorld()
     this.player = this.createTank('player')
-    this.world.add(this.player)
+    this.world.addMob(this.player)
 
     this.inputs = {}
     this.engine.runRenderLoop(() => {
@@ -184,17 +263,19 @@ class Game {
       if (this.inputs[KeyCode.KEY_A]) sz--
       if (this.inputs[KeyCode.KEY_D]) sz++
       if (sx !== 0 || sz !== 0) {
+        const target = this.camera.rotation.y + Math.atan2(sz, sx)
         this.player.mesh.rotation.y = moveTowardsAngle(
           this.player.mesh.rotation.y,
-          this.camera.rotation.y + Math.atan2(sz, sx),
+          target,
           0.03
         )
-        const speed = 10
+        const speed =
+          deltaAngle(this.player.mesh.rotation.y, target) < 1e-2 ? 10 : 5
         this.player.moving = true
         this.player.speed = BABYLON.Scalar.MoveTowards(
           this.player.speed,
           speed,
-          1
+          0.8
         )
         this.player.addAcceleration(
           new BABYLON.Vector3(
@@ -288,7 +369,7 @@ class Game {
 
   createTree() {
     const height = 5
-    const cone = BABYLON.MeshBuilder.CreateCylinder(
+    const leaves = BABYLON.MeshBuilder.CreateCylinder(
       'cone',
       {
         diameterTop: 0,
@@ -299,17 +380,17 @@ class Game {
       },
       this.scene
     )
-    cone.material = this.materials.leaves
-    cone.position.y = height
+    leaves.material = this.materials.leaves
+    leaves.position.y = height
     const trunk = BABYLON.MeshBuilder.CreateCylinder(
-      'cone',
-      { tessellation: 8, height, diameter: 0.75 },
+      'trunk',
+      { tessellation: 12, height, diameter: 0.75 },
       this.scene
     )
     trunk.material = this.materials.bark
     trunk.position.y = height / 2
     return BABYLON.Mesh.MergeMeshes(
-      [trunk, cone],
+      [trunk, leaves],
       true,
       false,
       false,
@@ -330,22 +411,30 @@ class Game {
     ground.material = new BABYLON.StandardMaterial('grass', this.scene)
     ground.material.specularColor = new BABYLON.Color3(0, 0, 0)
     ground.material.diffuseColor = new BABYLON.Color3(0.49, 0.72, 0.34)
-    const rng = new Alea('je')
-    const simplex = new SimplexNoise(new Alea('alizee'))
+    const rng = new Alea('alizee')
+    const simplex = new SimplexNoise(rng)
     const spacing = 4
     const noiseScale = 0.03
     const prototree = this.createTree()
-    const num = size / spacing
-    for (let x = 0; x < num; x++) {
-      for (let y = 0; y < num; y++) {
+    prototree.registerInstancedBuffer('color', 4)
+    prototree.isVisible = false
+    let trees = 0
+    for (let x = 0; x < size / spacing; x++) {
+      for (let y = 0; y < size / spacing; y++) {
         const wx = x * spacing - size / 2
         const wy = y * spacing - size / 2
         const d = (simplex.noise2D(wx * noiseScale, wy * noiseScale) + 1) / 2
         if (rng() < d - 0.1) {
-          const tree = prototree.createInstance(`tree_${x + y * num}`)
+          const tree = prototree.createInstance(`tree_${++trees}`)
+          tree.instancedBuffers.color = new BABYLON.Color4(
+            rng() * 0.2 + 0.8,
+            1.0,
+            rng() * 0.2 + 0.8,
+            1.0
+          )
           tree.position.x = wx + (rng() / 2) * spacing
           tree.position.z = wy + (rng() / 2) * spacing
-          this.world.addTree(tree)
+          this.world.addTree(new Tree(tree))
           this.shadows.addShadowCaster(tree)
         }
       }
