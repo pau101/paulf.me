@@ -17,6 +17,13 @@ class World {
     this.time = 0
   }
 
+  hasEnemey(predicate) {
+    for (const enemy of this.enemies) {
+      if (predicate(enemy)) return true
+    }
+    return false
+  }
+
   addUpdating(u) {
     u.world = this
     this.updating.add(u)
@@ -202,7 +209,7 @@ class Mob extends GameObject {
 
   collision(mesh) {
     this.addForce(
-      new BABYLON.Vector3().setAll(-400.0).multiplyInPlace(this.velocity)
+      new BABYLON.Vector3().set(-400.0, 0, -400.0).multiplyInPlace(this.velocity)
     )
     // FIXME
     this.velocity.y = 0
@@ -283,31 +290,32 @@ class EnemyTank extends Tank {
       this.look(this.targetLook)
       if (this.lookWait) {
         this.lookWait -= dt
-        if (this.lookWait < 0) {
-          this.targetLook = undefined
-          this.lookWait = 0
-        }
+        if (this.lookWait < 0) this.lookWait = 0
       }
+      if (!this.lookWait) this.targetLook = undefined
     } else if (this.lookWait) {
         this.lookWait -= dt
-        if (this.lookWait < 0) {
-          this.lookWait = 0
-        }
+        if (this.lookWait < 0) this.lookWait = 0
       } else {
         this.targetLook = this.mesh.rotation.y + BABYLON.Scalar.Denormalize(this.world.rng(), -Math.PI / 4, Math.PI / 4)
-        this.lookWait = 2
+        this.lookWait = this.world.rng() * 0.2 + 1.9
       }
     if (this.wait) {
       this.wait -= dt
-      if (this.wait < 0) {
-        this.wait = 0
-      }
+      if (this.wait < 0) this.wait = 0
       return
     }
     if (this.target !== undefined) {
       if (this.target.angle === 0) {
         const delta = this.target.mesh.position.subtract(this.mesh.position)
-        this.steer(Math.atan2(delta.x, delta.z))
+        const ang = Math.atan2(delta.x, delta.z)
+        this.steer(ang)
+        if (delta.lengthSquared() > 10) {
+          this.targetLook = ang
+          this.lookWait = 1
+        } else if (delta.lengthSquared() < 5) {
+          this.lookWait = 0
+        }
       } else {
         this.stop()
         this.target = undefined
@@ -321,6 +329,7 @@ class EnemyTank extends Tank {
         const delta = t.mesh.position.subtract(this.mesh.position)
         const dist = delta.lengthSquared()
         if (dist < closest) {
+          if (this.world.hasEnemey(buddy => buddy.target === t)) continue
           closest = dist
           this.target = t
         }
@@ -355,7 +364,7 @@ class Game {
     this.scene = new BABYLON.Scene(this.engine)
     this.scene.collisionsEnabled = true
     this.scene.clearColor = new BABYLON.Color3(0.57, 0.74, 0.88)
-    this.scene.ambientColor = new BABYLON.Color3(0.8, 0.88, 0.94)
+    // this.scene.ambientColor = new BABYLON.Color3(0.8, 0.88, 0.94)
     this.size = 64
     this.camera = new BABYLON.UniversalCamera(
       'camera',
@@ -384,7 +393,7 @@ class Game {
     ambient.intensity = 0.6
     const sun = new BABYLON.DirectionalLight(
       'sun_light',
-      new BABYLON.Vector3(-0.5, -0.8, 0).normalize(),
+      new BABYLON.Vector3(-0.4, -0.6, -0.2).normalize(),
       this.scene
     )
     sun.intensity = 0.4
@@ -412,14 +421,16 @@ class Game {
     this.createWorld()
     this.player = this.createTank(
       'player',
-      new BABYLON.Color3(0.81, 0.69, 0.36),
+      new BABYLON.Color3(0.22, 0.22, 0.76), // 0.81, 0.69, 0.36
       (m, t) => new Tank(m, t)
     )
     this.world.addMob(this.player)
-    const enemy = this.createTank('enemy', new BABYLON.Color3(0.66, 0.19, 0.19), (m, t) => new EnemyTank(m, t))
-    enemy.mesh.position.x = 5
-    enemy.mesh.position.z = 5
-    this.world.addEnemy(enemy)
+    for (let n = 3; n-- > 0; ) {
+      const enemy = this.createTank('enemy_' + n, new BABYLON.Color3(0.66, 0.19, 0.19), (m, t) => new EnemyTank(m, t))
+      enemy.mesh.position.x = BABYLON.Scalar.Denormalize(this.world.rng(), -1, 1) * (this.size / 2 - 10)
+      enemy.mesh.position.z = BABYLON.Scalar.Denormalize(this.world.rng(), -1, 1) * (this.size / 2 - 10)
+      this.world.addEnemy(enemy)
+    }
 
     this.inputs = {}
     this.engine.runRenderLoop(() => {
