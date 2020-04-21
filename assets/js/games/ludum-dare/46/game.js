@@ -977,10 +977,12 @@ class Game {
     if (e.keyCode === KeyCode.KEY_F) {
       this.player.plant()
     }
+    e.preventDefault()
   }
 
   keyup(e) {
     this.inputs[e.keyCode] = false
+    e.preventDefault()
   }
 
   dispose() {
