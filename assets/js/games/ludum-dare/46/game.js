@@ -461,8 +461,8 @@ class Tank extends Mob {
 }
 
 class PlayerTank extends Tank {
-  constructor(mesh) {
-    super(mesh)
+  constructor(mesh, turret) {
+    super(mesh, turret)
     this.seeds = 0
   }
 
