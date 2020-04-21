@@ -620,7 +620,7 @@ class Game {
     this.camera.rotation.y = -Math.PI / 4
     this.camera.rotation.x = Math.PI / 6
     this.camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA
-    const zoom = 20
+    const zoom = 5
     const a = this.engine.getAspectRatio(this.camera)
     this.camera.orthoTop = zoom
     this.camera.orthoBottom = -zoom
