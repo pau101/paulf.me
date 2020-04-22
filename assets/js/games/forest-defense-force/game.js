@@ -279,17 +279,16 @@ class World {
     ] of this.delaunay.trianglePolygons()) {
       const gx = (x1 + x2 + x3) / 3
       const gy = (y1 + y2 + y3) / 3
-      const size = Math.min(
-        (gx - x1) ** 2 + (gy - y1) ** 2,
-        (gx - x2) ** 2 + (gy - y2) ** 2,
-        (gx - x3) ** 2 + (gy - y3) ** 2
+      const area = Math.abs(
+        (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)) / 2
       )
-      // eslint-disable-next-line no-constant-condition
-      if (size > dist * dist || true) {
-        const area = Math.abs(
-          (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)) / 2
+      if (area > best) {
+        const size = Math.min(
+          (gx - x1) ** 2 + (gy - y1) ** 2,
+          (gx - x2) ** 2 + (gy - y2) ** 2,
+          (gx - x3) ** 2 + (gy - y3) ** 2
         )
-        if (area > best) {
+        if (size > dist * dist) {
           const ox = obj.mesh.position.x
           const oz = obj.mesh.position.z
           obj.mesh.position.x = gx
