@@ -25,7 +25,7 @@ class World {
     this.liveTrees = new Set()
     this.removals = new Set()
     this.updating = new Set()
-    this.enemies = new Set()
+    this.enemies = []
     this.seeds = new Set()
     this.time = 0
     this.seedId = 0
@@ -134,7 +134,7 @@ class World {
   }
 
   addEnemy(e) {
-    this.enemies.add(e)
+    this.enemies.push(e)
     this.addMob(e)
   }
 
@@ -286,7 +286,10 @@ class Tree extends GameObject {
       Math.atan2(vec.x, vec.z),
       Math.cos(this.angle) ** 4
     )
-    this.world.fall(this)
+    if (this.angle === 0) {
+      this.world.fall(this)
+      this.world.game.sounds.fall.play(this.mesh)
+    }
   }
 
   update(dt) {
@@ -301,10 +304,10 @@ class Tree extends GameObject {
     }
     if (this.angle === Math.PI / 2) return
     this.angularVelocity += 4 * dt
-    this.angularVelocity +=
+    this.angularVelocity -=
       Math.min(
-        -0.33 * this.angularVelocity * this.angularVelocity,
-        this.angularVelocity
+        0.3 * this.angularVelocity * this.angularVelocity,
+        Math.abs(this.angularVelocity)
       ) * dt
     this.angle += this.angularVelocity * dt
     if (this.angle > Math.PI / 2) {
@@ -396,6 +399,44 @@ class Seed extends Mob {
     if (this.age > 2 * 60) {
       this.world.remove(this)
     }
+  }
+}
+
+class SoundEffect {
+  constructor(name, url, assets, scene) {
+    this.name = name
+    this.sound = new BABYLON.Sound(name, new ArrayBuffer(0), scene, null, {
+      spatialSound: true
+    })
+    this.pool = [this.sound]
+    if (BABYLON.Engine.audioEngine.canUseWebAudio) {
+      const task = assets.addBinaryFileTask(`Load sound '${name}'`, url)
+      task.onSuccess = (t) =>
+        BABYLON.Engine.audioEngine.audioContext.decodeAudioData(t.data, (buf) =>
+          this.sound.setAudioBuffer(buf)
+        )
+    }
+  }
+
+  play(mesh) {
+    let sound
+    for (const s of this.pool) {
+      if (!s.isPlaying) {
+        sound = s
+        break
+      }
+    }
+    if (!sound) {
+      sound = this.sound.clone()
+      this.pool.push(sound)
+    }
+    if (mesh) {
+      sound.attachToMesh(mesh)
+    } else {
+      sound.detachFromMesh()
+    }
+    sound.play()
+    return sound
   }
 }
 
@@ -551,11 +592,9 @@ class EnemyTank extends Tank {
         }
         const ang = Math.atan2(delta.x, delta.z) + (this.away ? Math.PI : 0)
         this.steer(ang, 8, dt)
-        if (dist > 4) {
+        if (dist > 6) {
           this.targetLook = ang
-          this.lookWait = 1
-        } else if (dist < 2) {
-          this.lookWait = 0
+          this.lookWait = 0.1
         }
       } else {
         this.stop()
@@ -604,7 +643,7 @@ function moveTowardsAngleRadians(current, target, maxDelta) {
   return result
 }
 
-class Game {
+export class Game {
   constructor(canvas) {
     this.engine = new BABYLON.Engine(canvas, true)
     this.scene = new BABYLON.Scene(this.engine)
@@ -620,7 +659,7 @@ class Game {
     this.camera.rotation.y = -Math.PI / 4
     this.camera.rotation.x = Math.PI / 6
     this.camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA
-    const zoom = 5
+    const zoom = 8
     const a = this.engine.getAspectRatio(this.camera)
     this.camera.orthoTop = zoom
     this.camera.orthoBottom = -zoom
@@ -744,8 +783,8 @@ class Game {
         this.player.look(this.camera.rotation.y + Math.atan2(tz, tx), dt)
       }
       this.world.update(dt)
-      this.camera.position.x = this.player.mesh.position.x
-      this.camera.position.z = this.player.mesh.position.z
+      // this.follow(this.player)
+      this.follow(this.world.enemies[0])
       this.scene.render()
       fpsText.text = `FPS: ${this.engine.performanceMonitor.averageFPS | 0}`
       if (!this.world.alive()) {
@@ -756,6 +795,21 @@ class Game {
 
     canvas.addEventListener('keydown', (e) => this.keydown(e))
     canvas.addEventListener('keyup', (e) => this.keyup(e))
+
+    const assets = new BABYLON.AssetsManager(this.scene)
+    this.sounds = {}
+    this.sounds.fall = new SoundEffect(
+      'fall',
+      '/assets/games/forest-defense-force/sounds/sound_1.mp3',
+      assets,
+      this.scene
+    )
+    assets.load()
+  }
+
+  follow(obj) {
+    this.camera.position.x = obj.mesh.position.x
+    this.camera.position.z = obj.mesh.position.z
   }
 
   createTank(name, color, type) {
@@ -990,5 +1044,3 @@ class Game {
     this.engine.dispose()
   }
 }
-
-export { Game }
