@@ -3,6 +3,7 @@ import * as GUI from 'babylonjs-gui'
 import * as KeyCode from 'keycode-js'
 import Alea from 'alea'
 import SimplexNoise from 'simplex-noise'
+import { Delaunay } from 'd3-delaunay'
 
 // FIXME
 BABYLON.GUI = GUI
@@ -20,7 +21,7 @@ class World {
     this.rng = rng
     this.sun = sun
     this.ambient = ambient
-    this.mobs = new Set()
+    this.mobs = []
     this.trees = new Set()
     this.liveTrees = new Set()
     this.removals = new Set()
@@ -28,12 +29,13 @@ class World {
     this.enemies = []
     this.seeds = new Set()
     this.time = 0
+    this.daytime = 0
     this.seedId = 0
     this.treeId = 0
     this.seedproto = this.createSeedproto()
     this.treeproto = this.createTreeproto()
     this.seedWait = 4
-    this.maxSeeds = 0.2
+    this.maxSeeds = 0.33
     this.treeGridScale = this.game.size
     this.treeGridSize = 1
   }
@@ -128,7 +130,7 @@ class World {
 
   addMob(mob) {
     mob.world = this
-    this.mobs.add(mob)
+    this.mobs.push(mob)
     this.updating.add(mob)
     this.game.shadows.addShadowCaster(mob.mesh, true)
   }
@@ -147,7 +149,9 @@ class World {
 
   update(dt) {
     for (const r of this.removals) {
-      if (this.mobs.delete(r)) {
+      const i = this.mobs.indexOf(r)
+      if (i !== -1) {
+        this.mobs.splice(i, 1)
         this.game.shadows.removeShadowCaster(r.mesh, true)
       }
       this.seeds.delete(r)
@@ -161,15 +165,17 @@ class World {
     this.dropSeed(dt)
     this.daynight(dt)
     this.life(dt)
+    this.time += dt
   }
 
   daynight(dt) {
-    if (isNaN(this.time)) return
-    this.time = this.time + (dt * (2 * Math.PI)) / (60 * 4)
-    while (this.time > 2 * Math.PI) {
-      this.time -= 2 * Math.PI
+    if (isNaN(this.daytime)) return
+    this.daytime = this.daytime + (dt * (2 * Math.PI)) / (60 * 4)
+    while (this.daytime > 2 * Math.PI) {
+      this.daytime -= 2 * Math.PI
     }
-    const source = this.time > Math.PI ? this.time - Math.PI : this.time
+    const source =
+      this.daytime > Math.PI ? this.daytime - Math.PI : this.daytime
     BABYLON.Vector3.Right().rotateByQuaternionToRef(
       BABYLON.Quaternion.RotationAxis(BABYLON.Vector3.Forward(), source),
       this.sun.position
@@ -181,15 +187,15 @@ class World {
     this.sun.position.scaleToRef(-1, this.sun.direction)
     this.pi = this.sun.intensity
     this.sun.intensity = BABYLON.Scalar.Denormalize(
-      (Math.sin(this.time) + 1) / 2 +
-        (this.time > Math.PI
-          ? 0.05 * ((Math.sin(2 * this.time - Math.PI / 2) + 1) / 2)
+      (Math.sin(this.daytime) + 1) / 2 +
+        (this.daytime > Math.PI
+          ? 0.05 * ((Math.sin(2 * this.daytime - Math.PI / 2) + 1) / 2)
           : 0),
       0.0,
       0.4
     )
     this.ambient.intensity = BABYLON.Scalar.Denormalize(
-      this.time > Math.PI ? 0 : (Math.sin(this.time) + 1) / 2,
+      this.daytime > Math.PI ? 0 : (Math.sin(this.daytime) + 1) / 2,
       0.2,
       0.4
     )
@@ -224,7 +230,7 @@ class World {
       this.liveTrees.size &&
       this.seeds.size < this.maxSeeds * this.liveTrees.size
     ) {
-      this.seedWait = BABYLON.Scalar.Denormalize(this.rng(), 60, 100)
+      this.seedWait = BABYLON.Scalar.Denormalize(this.rng(), 40, 60)
       const tree = Array.from(this.liveTrees)[
         (this.rng() * this.liveTrees.size) | 0
       ]
@@ -238,6 +244,45 @@ class World {
       seed.addAcceleration(
         new BABYLON.Vector3(100 * Math.cos(ang), 0, 100 * Math.sin(ang))
       )
+    }
+  }
+
+  triangulate() {
+    this.delaunay = Delaunay.from(
+      this.trees,
+      (tree) => tree.mesh.position.x,
+      (tree) => tree.mesh.position.z
+    )
+  }
+
+  freespace(obj, dist) {
+    let best = 0
+    for (const [
+      [x1, y1],
+      [x2, y2],
+      [x3, y3]
+    ] of this.delaunay.trianglePolygons()) {
+      const gx = (x1 + x2 + x3) / 3
+      const gy = (y1 + y2 + y3) / 3
+      const r = Math.min(
+        (gx - x1) ** 2 + (gy - y1) ** 2,
+        (gx - x2) ** 2 + (gy - y2) ** 2,
+        (gx - x3) ** 2 + (gy - y3) ** 2
+      )
+      if (r > dist * dist && r > best) {
+        const ox = obj.mesh.position.x
+        const oz = obj.mesh.position.z
+        obj.mesh.position.x = gx
+        obj.mesh.position.z = gy
+        obj.mesh.computeWorldMatrix()
+        if (
+          this.mobs.find((m) => m !== obj && obj.mesh.intersectsMesh(m.mesh))
+        ) {
+          obj.mesh.position.x = ox
+          obj.mesh.position.z = oz
+        }
+        best = r
+      }
     }
   }
 }
@@ -263,7 +308,6 @@ class GameObject {
   }
 }
 
-// eslint-disable-next-line no-unused-vars
 class Tree extends GameObject {
   constructor(mesh) {
     super(mesh)
@@ -276,7 +320,7 @@ class Tree extends GameObject {
   intersects(other) {
     const trunk = this.mesh.metadata.trunk
     trunk.position.copyFrom(this.mesh.position)
-    trunk.computeWorldMatrix(true)
+    trunk.computeWorldMatrix()
     return trunk.intersectsMesh(other, true)
   }
 
@@ -396,7 +440,7 @@ class Seed extends Mob {
   update(dt) {
     super.update(dt)
     this.age += dt
-    if (this.age > 2 * 60) {
+    if (this.age > 60) {
       this.world.remove(this)
     }
   }
@@ -591,7 +635,7 @@ class EnemyTank extends Tank {
           }
         }
         const ang = Math.atan2(delta.x, delta.z) + (this.away ? Math.PI : 0)
-        this.steer(ang, 8, dt)
+        this.steer(ang, 7, dt)
         if (dist > 6) {
           this.targetLook = ang
           this.lookWait = 0.1
@@ -693,13 +737,12 @@ export class Game {
       BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT
     // this.ui.addControl(fpsText)
     const gameoverText = new BABYLON.GUI.TextBlock()
-    gameoverText.text = 'the forest was not kept alive'
-    gameoverText.fontSize = 100
+    gameoverText.fontSize = 80
     gameoverText.fontWeight = 700
     gameoverText.color = 'white'
     gameoverText.fontFamily = 'Inter UI'
     gameoverText.textWrapping = true
-    gameoverText.width = '600px'
+    gameoverText.width = '700px'
     gameoverText.verticalAlignment =
       BABYLON.GUI.Control.VERTICAL_ALIGNMENT_CENTER
     gameoverText.horizontalAlignment =
@@ -732,7 +775,7 @@ export class Game {
     this.materials.rock.specularColor = new BABYLON.Color3(0.25, 0.25, 0.25)
     this.materials.rock.diffuseColor = new BABYLON.Color3(0.42, 0.47, 0.48)
     this.world = new World(this, new Alea(), sun, ambient)
-    this.world.time = Number.NaN
+    this.world.daytime = Number.NaN
     this.shadows = new BABYLON.ShadowGenerator(1024, sun)
     this.shadows.usePercentageCloserFiltering = true
     // this.shadows.autoCalcDepthBounds = true
@@ -743,6 +786,7 @@ export class Game {
       new BABYLON.Color3(0.22, 0.22, 0.76),
       (m, t) => new PlayerTank(m, t)
     )
+    this.world.freespace(this.player, 4)
     this.world.addMob(this.player)
     for (let n = 1; n-- > 0; ) {
       const enemy = this.createTank(
@@ -756,6 +800,7 @@ export class Game {
       enemy.mesh.position.z =
         BABYLON.Scalar.Denormalize(this.world.rng(), -1, 1) *
         (this.size / 2 - 10)
+      this.world.freespace(enemy, 4)
       this.world.addEnemy(enemy)
     }
 
@@ -783,11 +828,13 @@ export class Game {
         this.player.look(this.camera.rotation.y + Math.atan2(tz, tx), dt)
       }
       this.world.update(dt)
-      // this.follow(this.player)
-      this.follow(this.world.enemies[0])
+      this.follow(this.player)
+      // this.follow(this.world.enemies[0])
       this.scene.render()
       fpsText.text = `FPS: ${this.engine.performanceMonitor.averageFPS | 0}`
-      if (!this.world.alive()) {
+      if (!gameoverText.isVisible && !this.world.alive()) {
+        gameoverText.text = `the forest was not kept alive (${this.world.time |
+          0}\u202Fseconds)`
         gameoverText.isVisible = true
       }
       this.uiScene.render()
@@ -855,7 +902,7 @@ export class Game {
   }
 
   createWorld() {
-    const rng = new Alea('alizee')
+    const rng = new Alea()
     const ground = BABYLON.MeshBuilder.CreatePlane(
       'ground',
       {
@@ -986,10 +1033,13 @@ export class Game {
     this.world.desiredTrees = trees
     this.world.treeGridScale = gridScale
     this.world.treeGridSize = gridSize
+    this.world.triangulate()
   }
 
   createRocks(rng) {
     const spacing = 2
+    const gridScale = this.size - 2
+    const gridSize = (gridScale / spacing) | 0
     const rockproto = BABYLON.MeshBuilder.CreateBox(
       'rock',
       { size: 0.5 },
@@ -999,10 +1049,10 @@ export class Game {
     rockproto.receiveShadows = true
     rockproto.isVisible = false
     let rocks = 0
-    for (let x = 0; x < this.size / spacing; x++) {
-      for (let y = 0; y < this.size / spacing; y++) {
-        const wx = x * spacing - this.size / 2
-        const wy = y * spacing - this.size / 2
+    for (let x = 0; x < gridSize; x++) {
+      for (let y = 0; y < gridSize; y++) {
+        const wx = x * spacing - gridScale / 2
+        const wy = y * spacing - gridScale / 2
         if (rng() < 0.4) {
           const cluster = (rng() * rng() * 4) | 0
           const cx = wx + (rng() / 2) * spacing
@@ -1031,12 +1081,16 @@ export class Game {
     if (e.keyCode === KeyCode.KEY_F) {
       this.player.plant()
     }
-    e.preventDefault()
+    if (!(e.keyCode >= KeyCode.KEY_F1 && e.keyCode <= KeyCode.KEY_F24)) {
+      e.preventDefault()
+    }
   }
 
   keyup(e) {
     this.inputs[e.keyCode] = false
-    e.preventDefault()
+    if (!(e.keyCode >= KeyCode.KEY_F1 && e.keyCode <= KeyCode.KEY_F24)) {
+      e.preventDefault()
+    }
   }
 
   dispose() {
