@@ -253,6 +253,21 @@ class World {
       (tree) => tree.mesh.position.x,
       (tree) => tree.mesh.position.z
     )
+    // const positions = []
+    // for (const tree of this.trees) {
+    //   positions.push(tree.mesh.position.x, 1, tree.mesh.position.z)
+    // }
+    // const indices = [...this.delaunay.triangles]
+    // const normals = []
+    // BABYLON.VertexData.ComputeNormals(positions, indices, normals)
+    // const verts = new BABYLON.VertexData()
+    // verts.positions = positions
+    // verts.indices = indices
+    // verts.normals = normals
+    // const mesh = new BABYLON.Mesh('delaunay', this.game.scene)
+    // verts.applyToMesh(mesh)
+    // mesh.material = new BABYLON.StandardMaterial('wireframe', this.game.scene)
+    // mesh.material.wireframe = true
   }
 
   freespace(obj, dist) {
@@ -264,24 +279,32 @@ class World {
     ] of this.delaunay.trianglePolygons()) {
       const gx = (x1 + x2 + x3) / 3
       const gy = (y1 + y2 + y3) / 3
-      const r = Math.min(
+      const size = Math.min(
         (gx - x1) ** 2 + (gy - y1) ** 2,
         (gx - x2) ** 2 + (gy - y2) ** 2,
         (gx - x3) ** 2 + (gy - y3) ** 2
       )
-      if (r > dist * dist && r > best) {
-        const ox = obj.mesh.position.x
-        const oz = obj.mesh.position.z
-        obj.mesh.position.x = gx
-        obj.mesh.position.z = gy
-        obj.mesh.computeWorldMatrix()
-        if (
-          this.mobs.find((m) => m !== obj && obj.mesh.intersectsMesh(m.mesh))
-        ) {
-          obj.mesh.position.x = ox
-          obj.mesh.position.z = oz
+      // eslint-disable-next-line no-constant-condition
+      if (size > dist * dist || true) {
+        const area = Math.abs(
+          (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)) / 2
+        )
+        if (area > best) {
+          const ox = obj.mesh.position.x
+          const oz = obj.mesh.position.z
+          obj.mesh.position.x = gx
+          obj.mesh.position.z = gy
+          obj.mesh.computeWorldMatrix()
+          if (
+            this.mobs.find((m) => m !== obj && obj.mesh.intersectsMesh(m.mesh))
+          ) {
+            obj.mesh.position.x = ox
+            obj.mesh.position.z = oz
+            obj.mesh.computeWorldMatrix()
+          } else {
+            best = area
+          }
         }
-        best = r
       }
     }
   }
@@ -689,6 +712,7 @@ function moveTowardsAngleRadians(current, target, maxDelta) {
 
 export class Game {
   constructor(canvas) {
+    const topdown = false
     this.engine = new BABYLON.Engine(canvas, true)
     this.scene = new BABYLON.Scene(this.engine)
     this.scene.collisionsEnabled = true
@@ -700,10 +724,10 @@ export class Game {
       BABYLON.Vector3.Zero(),
       this.scene
     )
-    this.camera.rotation.y = -Math.PI / 4
-    this.camera.rotation.x = Math.PI / 6
+    this.camera.rotation.y = topdown ? -Math.PI / 2 : -Math.PI / 4
+    this.camera.rotation.x = topdown ? Math.PI / 2 : Math.PI / 6
     this.camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA
-    const zoom = 8
+    const zoom = topdown ? (this.size - 10) / 2 : 8
     const a = this.engine.getAspectRatio(this.camera)
     this.camera.orthoTop = zoom
     this.camera.orthoBottom = -zoom
@@ -828,7 +852,7 @@ export class Game {
         this.player.look(this.camera.rotation.y + Math.atan2(tz, tx), dt)
       }
       this.world.update(dt)
-      this.follow(this.player)
+      if (!topdown) this.follow(this.player)
       // this.follow(this.world.enemies[0])
       this.scene.render()
       fpsText.text = `FPS: ${this.engine.performanceMonitor.averageFPS | 0}`
@@ -866,7 +890,8 @@ export class Game {
       options,
       this.scene
     )
-    body.position.y = 4
+    body.position.y = options.height / 2 + 0.5
+    body.rotation.y = 2 * Math.PI * this.world.rng()
     body.ellipsoid = new BABYLON.Vector3(
       Math.max(options.width, options.depth) / 2,
       options.height / 2,
@@ -1010,28 +1035,26 @@ export class Game {
 
   createTrees(rng) {
     const simplex = new SimplexNoise(rng)
+    const margin = 0.7
     const spacing = 4
     const noiseScale = 0.04
-    const gridScale = this.size - 12
-    const gridSize = (gridScale / spacing) | 0
+    const gridSize = ((this.size - 12) / spacing) | 0
+    const centerOffset = ((gridSize + margin * 2 - 1) * spacing) / 2
     let trees = 0
     for (let x = 0; x < gridSize; x++) {
       for (let y = 0; y < gridSize; y++) {
-        const wx = x * spacing - gridScale / 2
-        const wy = y * spacing - gridScale / 2
+        const wx = x * spacing - centerOffset
+        const wy = y * spacing - centerOffset
         const d = (simplex.noise2D(wx * noiseScale, wy * noiseScale) + 1) / 2
         if (rng() < d * d * 2) {
           const tree = this.world.createTree()
-          tree.mesh.position.x = wx + (rng() / 2) * spacing
-          tree.mesh.position.z = wy + (rng() / 2) * spacing
+          tree.mesh.position.x = wx + rng() * margin * spacing
+          tree.mesh.position.z = wy + rng() * margin * spacing
           trees++
-          // tree.metadata.dispose = () => this.shadows.removeShadowCaster(tree)
-          // break
         }
       }
     }
     this.world.desiredTrees = trees
-    this.world.treeGridScale = gridScale
     this.world.treeGridSize = gridSize
     this.world.triangulate()
   }
