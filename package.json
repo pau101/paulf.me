@@ -18,7 +18,7 @@
     "babylonjs-loaders": "^4.1.0",
     "d3-delaunay": "^5.2.1",
     "keycode-js": "^2.0.3",
-    "nuxt": "^2.0.0",
+    "nuxt": "^2.15.8",
     "simplex-noise": "^2.4.0"
   },
   "devDependencies": {
